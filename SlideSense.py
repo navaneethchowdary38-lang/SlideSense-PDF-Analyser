@@ -576,46 +576,7 @@ if pdf is not None:
     )
 
 
-   if user_query:
-    with st.spinner("🤖 Generating intelligent response..."):
-
-        docs = vector_db.similarity_search(user_query, k=4)
-
-        context = "\n\n".join([doc.page_content for doc in docs])
-
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=os.getenv("GOOGLE_API_KEY")
-        )
-
-        final_prompt = f"""
-You are an AI assistant.
-Answer the question strictly using the context below.
-If the answer is not present, say "Information not found in the document."
-
-Context:
-{context}
-
-Question:
-{user_query}
-
-Answer:
-"""
-
-        response = llm.invoke(final_prompt)
-
-    st.markdown(f"""
-    <div class="response-section">
-        <div class="response-header">
-            <span class="response-icon">🤖</span>
-            <h3 class="response-title">Response</h3>
-        </div>
-        <div class="response-content">
-            {response.content}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
+ if user_query: with st.spinner('🤖 Generating intelligent response...'): docs = vector_db.similarity_search(user_query) llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash") prompt = ChatPromptTemplate.from_template("Answer the following:\n{context}\nQuestion: {question}\n Read the context carefully and then answer it") chain = create_stuff_documents_chain(llm, prompt) response = chain.invoke({"context": docs, "question": user_query}) # Display response with enhanced formatting st.markdown(f""" <div class="response-section"> <div class="response-header"> <span class="response-icon">🤖</span> <h3 class="response-title">Response</h3> </div> <div class="response-content">{response}</div> </div> """, unsafe_allow_html=True)
 else:
     # Instructions
     st.markdown("""
