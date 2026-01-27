@@ -1,16 +1,14 @@
 
 import streamlit as st
+import os
+import asyncio
 from PyPDF2 import PdfReader
+from dotenv import load_dotenv
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
-from dotenv import load_dotenv
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
-import asyncio
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Page configuration
 st.set_page_config(
@@ -582,7 +580,6 @@ if pdf is not None:
         with st.spinner('🤖 Generating intelligent response...'):
             docs = vector_db.similarity_search(user_query)
             llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
-            prompt = ChatPromptTemplate.from_template("Answer the following:\n{context}\nQuestion: {question}\n Read the context carefully and then answer it")
             chain = create_stuff_documents_chain(llm, prompt)  
             response = chain.invoke({"context": docs, "question": user_query})
             
