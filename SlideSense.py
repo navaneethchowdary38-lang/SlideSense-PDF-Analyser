@@ -8,11 +8,14 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 from PIL import Image
+import google.generativeai as genai
+import base64
 import io
+import os
 
-# ------------------------------------
+# --------------------------------------------------
 # CONFIG
-# ------------------------------------
+# --------------------------------------------------
 st.set_page_config(
     page_title="SlideSense PDF Analyser",
     page_icon="📘",
@@ -20,112 +23,125 @@ st.set_page_config(
 )
 
 load_dotenv()
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# ------------------------------------
-# SIMPLE SAFE CSS (BOOT SAFE)
-# ------------------------------------
+# --------------------------------------------------
+# BASIC SAFE STYLING (Cloud-Safe)
+# --------------------------------------------------
 st.markdown("""
 <style>
-.stApp { background-color: #0f172a; color: white; }
-.response-section { padding: 1.5rem; border-radius: 12px; background: #020617; margin-top: 1rem; }
+.stApp { background-color:#0f172a; color:white; }
+.section { padding:1.5rem; border-radius:12px; background:#020617; margin-top:1.5rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ------------------------------------
+# --------------------------------------------------
 # TITLE
-# ------------------------------------
+# --------------------------------------------------
 st.title("📘 SlideSense PDF Analyser")
 
-# ------------------------------------
-# PDF UPLOAD
-# ------------------------------------
+# --------------------------------------------------
+# PDF UPLOAD & PROCESSING
+# --------------------------------------------------
 pdf = st.file_uploader("Upload PDF", type="pdf")
 
 if pdf:
-    reader = PdfReader(pdf)
-    text = ""
+    with st.spinner("Processing PDF..."):
+        reader = PdfReader(pdf)
+        text = ""
 
-    for page in reader.pages:
-        if page.extract_text():
-            text += page.extract_text()
+        for page in reader.pages:
+            if page.extract_text():
+                text += page.extract_text() + "\n"
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=80
-    )
-    chunks = splitter.split_text(text)
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500,
+            chunk_overlap=80
+        )
+        chunks = splitter.split_text(text)
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
-
-    vector_db = FAISS.from_texts(chunks, embeddings)
-
-    st.success("PDF processed successfully")
-
-    query = st.text_input("Ask a question about the PDF")
-
-    if query:
-        docs = vector_db.similarity_search(query)
-
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
-
-        prompt = ChatPromptTemplate.from_template(
-            "Answer using the context below:\n\n{context}\n\nQuestion: {question}"
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
 
-        chain = create_stuff_documents_chain(llm, prompt)
-        response = chain.invoke({
-            "context": docs,
-            "question": query
-        })
+        vector_db = FAISS.from_texts(chunks, embeddings)
+
+    st.success("✅ PDF processed successfully")
+
+    # --------------------------------------------------
+    # PDF QUESTION ANSWERING
+    # --------------------------------------------------
+    pdf_query = st.text_input("Ask a question about the PDF")
+
+    if pdf_query:
+        with st.spinner("🤖 Generating PDF answer..."):
+            docs = vector_db.similarity_search(pdf_query)
+
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash"
+            )
+
+            prompt = ChatPromptTemplate.from_template(
+                "Answer the question using the context below.\n\n{context}\n\nQuestion: {question}"
+            )
+
+            chain = create_stuff_documents_chain(llm, prompt)
+            pdf_response = chain.invoke({
+                "context": docs,
+                "question": pdf_query
+            })
 
         st.markdown(f"""
-        <div class="response-section">
-            <b>PDF Response</b><br><br>
-            {response}
+        <div class="section">
+            <b>📘 PDF Response</b><br><br>
+            {pdf_response}
         </div>
         """, unsafe_allow_html=True)
 
-# ------------------------------------
-# IMAGE QUESTION ANSWERING (SAFE)
-# ------------------------------------
+# --------------------------------------------------
+# IMAGE VISUAL QUESTION ANSWERING (SAFE VERSION)
+# --------------------------------------------------
 st.divider()
 st.subheader("🖼️ Visual Question Answering")
 
-image_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
-image_question = st.text_input("Ask a question about the image")
+image_file = st.file_uploader(
+    "Upload an image",
+    type=["png", "jpg", "jpeg"]
+)
+
+image_question = st.text_input(
+    "Ask a question about the image"
+)
 
 if image_file and image_question:
     image = Image.open(image_file)
     st.image(image, caption="Uploaded Image", use_container_width=True)
 
-    img_bytes = io.BytesIO()
-    image.save(img_bytes, format=image.format)
-    img_bytes = img_bytes.getvalue()
+    # Convert image to base64
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG")
+    img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-    vision_llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-pro"
-    )
+    with st.spinner("🧠 Analyzing image..."):
+        model = genai.GenerativeModel("gemini-1.5-pro")
 
-    response = vision_llm.invoke([
-        {
-            "role": "user",
-            "parts": [
-                {"text": image_question},
-                {
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": img_bytes
-                    }
-                }
-            ]
-        }
-    ])
+        response = model.generate_content([
+            image_question,
+            {
+                "mime_type": "image/jpeg",
+                "data": img_base64
+            }
+        ])
 
     st.markdown(f"""
-    <div class="response-section">
-        <b>Image Response</b><br><br>
-        {response.content}
+    <div class="section">
+        <b>🖼️ Image Response</b><br><br>
+        {response.text}
     </div>
     """, unsafe_allow_html=True)
+
+# --------------------------------------------------
+# EMPTY STATE
+# --------------------------------------------------
+if not pdf and not image_file:
+    st.info("Upload a PDF or an image to begin analysis.")
