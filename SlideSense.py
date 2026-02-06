@@ -123,7 +123,7 @@ if image_file and image_question:
     img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     with st.spinner("🧠 Analyzing image..."):
-        model = genai.GenerativeModel("gemini-1.5-pro")
+        model = genai.GenerativeModel("gemini-pro-vision")
 
         response = model.generate_content([
             image_question,
@@ -139,9 +139,3 @@ if image_file and image_question:
         {response.text}
     </div>
     """, unsafe_allow_html=True)
-
-# --------------------------------------------------
-# EMPTY STATE
-# --------------------------------------------------
-if not pdf and not image_file:
-    st.info("Upload a PDF or an image to begin analysis.")
