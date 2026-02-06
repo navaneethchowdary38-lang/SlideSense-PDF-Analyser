@@ -8,180 +8,124 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 from PIL import Image
-import asyncio
+import io
 
-# ----------------------------------------------------
-# PAGE CONFIG
-# ----------------------------------------------------
+# ------------------------------------
+# CONFIG
+# ------------------------------------
 st.set_page_config(
     page_title="SlideSense PDF Analyser",
     page_icon="📘",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    layout="wide"
 )
 
 load_dotenv()
 
-# ----------------------------------------------------
-# STYLES (UNCHANGED)
-# ----------------------------------------------------
-st.markdown("""<style>/* YOUR FULL CSS IS UNCHANGED – OMITTED HERE FOR BREVITY */
-</style>""", unsafe_allow_html=True)
-
-# ----------------------------------------------------
-# HERO SECTION
-# ----------------------------------------------------
+# ------------------------------------
+# SIMPLE SAFE CSS (BOOT SAFE)
+# ------------------------------------
 st.markdown("""
-<div class="hero-section">
-    <h1 class="hero-title">SlideSense PDF Analyser</h1>
-    <p class="hero-subtitle">Advanced Document Analysis with AI Technology</p>
-</div>
+<style>
+.stApp { background-color: #0f172a; color: white; }
+.response-section { padding: 1.5rem; border-radius: 12px; background: #020617; margin-top: 1rem; }
+</style>
 """, unsafe_allow_html=True)
 
-# ----------------------------------------------------
+# ------------------------------------
+# TITLE
+# ------------------------------------
+st.title("📘 SlideSense PDF Analyser")
+
+# ------------------------------------
 # PDF UPLOAD
-# ----------------------------------------------------
-pdf = st.file_uploader(
-    "Document Upload",
-    type="pdf",
-    help="Choose a PDF document for analysis"
-)
+# ------------------------------------
+pdf = st.file_uploader("Upload PDF", type="pdf")
 
-if pdf is not None:
-    with st.spinner("Processing your document..."):
-        reader = PdfReader(pdf)
-        text = ""
+if pdf:
+    reader = PdfReader(pdf)
+    text = ""
 
-        for page in reader.pages:
-            if page.extract_text():
-                text += page.extract_text() + "\n"
+    for page in reader.pages:
+        if page.extract_text():
+            text += page.extract_text()
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=80
-        )
-        chunks = splitter.split_text(text)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,
+        chunk_overlap=80
+    )
+    chunks = splitter.split_text(text)
 
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.set_event_loop(asyncio.new_event_loop())
-
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
-
-        vector_db = FAISS.from_texts(chunks, embeddings)
-
-    st.markdown("""
-    <div class="success-notification">
-        <p class="success-text">✅ Document processed successfully</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ----------------------------------------------------
-    # PDF QUESTION ANSWERING
-    # ----------------------------------------------------
-    st.markdown("""
-    <div class="query-section">
-        <div class="section-title">PDF Question Answering</div>
-        <div class="section-subtitle">Ask questions about the uploaded PDF</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    pdf_query = st.text_input(
-        "Ask a question about the PDF",
-        placeholder="Enter your question...",
-        label_visibility="collapsed"
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    if pdf_query:
-        with st.spinner("🤖 Generating answer..."):
-            docs = vector_db.similarity_search(pdf_query)
+    vector_db = FAISS.from_texts(chunks, embeddings)
 
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash"
-            )
+    st.success("PDF processed successfully")
 
-            prompt = ChatPromptTemplate.from_template(
-                "Answer the question using the context below.\n\n{context}\n\nQuestion: {question}"
-            )
+    query = st.text_input("Ask a question about the PDF")
 
-            chain = create_stuff_documents_chain(llm, prompt)
-            pdf_response = chain.invoke({
-                "context": docs,
-                "question": pdf_query
-            })
+    if query:
+        docs = vector_db.similarity_search(query)
+
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+
+        prompt = ChatPromptTemplate.from_template(
+            "Answer using the context below:\n\n{context}\n\nQuestion: {question}"
+        )
+
+        chain = create_stuff_documents_chain(llm, prompt)
+        response = chain.invoke({
+            "context": docs,
+            "question": query
+        })
 
         st.markdown(f"""
         <div class="response-section">
-            <div class="response-header">
-                <span class="response-icon">📘</span>
-                <h3 class="response-title">PDF Response</h3>
-            </div>
-            <div class="response-content">{pdf_response}</div>
+            <b>PDF Response</b><br><br>
+            {response}
         </div>
         """, unsafe_allow_html=True)
 
-    # ----------------------------------------------------
-    # IMAGE QUESTION ANSWERING (NEW)
-    # ----------------------------------------------------
-    st.markdown("""
-    <div class="query-section">
-        <div class="section-title">Visual Question Answering</div>
-        <div class="section-subtitle">Upload an image and ask questions about it</div>
-    </div>
-    """, unsafe_allow_html=True)
+# ------------------------------------
+# IMAGE QUESTION ANSWERING (SAFE)
+# ------------------------------------
+st.divider()
+st.subheader("🖼️ Visual Question Answering")
 
-    image_file = st.file_uploader(
-        "Upload Image",
-        type=["png", "jpg", "jpeg"],
-        label_visibility="collapsed"
+image_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
+image_question = st.text_input("Ask a question about the image")
+
+if image_file and image_question:
+    image = Image.open(image_file)
+    st.image(image, caption="Uploaded Image", use_container_width=True)
+
+    img_bytes = io.BytesIO()
+    image.save(img_bytes, format=image.format)
+    img_bytes = img_bytes.getvalue()
+
+    vision_llm = ChatGoogleGenerativeAI(
+        model="gemini-1.5-pro"
     )
 
-    image_question = st.text_input(
-        "Ask a question about the image",
-        placeholder="What is shown in this image?",
-        label_visibility="collapsed"
-    )
+    response = vision_llm.invoke([
+        {
+            "role": "user",
+            "parts": [
+                {"text": image_question},
+                {
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": img_bytes
+                    }
+                }
+            ]
+        }
+    ])
 
-    if image_file is not None and image_question:
-        image = Image.open(image_file)
-
-        st.image(image, caption="Uploaded Image", use_container_width=True)
-
-        with st.spinner("🧠 Analyzing image..."):
-            vision_llm = ChatGoogleGenerativeAI(
-                model="gemini-1.5-pro"
-            )
-
-            vision_prompt = ChatPromptTemplate.from_messages([
-                ("system", "You are an expert visual reasoning assistant."),
-                ("human", [
-                    {"type": "text", "text": image_question},
-                    {"type": "image", "image": image}
-                ])
-            ])
-
-            vision_chain = vision_prompt | vision_llm
-            vision_response = vision_chain.invoke({})
-
-        st.markdown(f"""
-        <div class="response-section">
-            <div class="response-header">
-                <span class="response-icon">🖼️</span>
-                <h3 class="response-title">Image Response</h3>
-            </div>
-            <div class="response-content">{vision_response.content}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-else:
-    st.markdown("""
-    <div class="instruction-container">
-        <div class="instruction-title">Get Started</div>
-        <div class="instruction-text">
-            Upload a PDF or an image to unlock AI-powered document and visual understanding.
-        </div>
+    st.markdown(f"""
+    <div class="response-section">
+        <b>Image Response</b><br><br>
+        {response.content}
     </div>
     """, unsafe_allow_html=True)
