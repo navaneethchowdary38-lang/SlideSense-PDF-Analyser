@@ -12,6 +12,9 @@ import google.generativeai as genai
 import base64
 import io
 import os
+import pytesseract
+import numpy as np
+
 
 # --------------------------------------------------
 # CONFIG
@@ -117,25 +120,31 @@ if image_file and image_question:
     image = Image.open(image_file)
     st.image(image, caption="Uploaded Image", use_container_width=True)
 
-    # Convert image to base64
-    buffer = io.BytesIO()
-    image.save(buffer, format="JPEG")
-    img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    # OCR
+    extracted_text = pytesseract.image_to_string(image)
 
-    with st.spinner("🧠 Analyzing image..."):
-        model = genai.GenerativeModel("gemini-pro-vision")
+    with st.spinner("🧠 Analyzing image content..."):
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash"
+        )
 
-        response = model.generate_content([
-            image_question,
-            {
-                "mime_type": "image/jpeg",
-                "data": img_base64
-            }
-        ])
+        prompt = f"""
+        The following text was extracted from an image using OCR:
+
+        {extracted_text}
+
+        Question:
+        {image_question}
+
+        Answer clearly based on the image content.
+        """
+
+        response = llm.invoke(prompt)
 
     st.markdown(f"""
     <div class="section">
         <b>🖼️ Image Response</b><br><br>
-        {response.text}
+        {response.content}
     </div>
     """, unsafe_allow_html=True)
+
