@@ -14,9 +14,11 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from transformers import BlipProcessor, BlipForQuestionAnswering
 
+
 # -------------------- CONFIG --------------------
 st.set_page_config(page_title="SlideSense", page_icon="📘", layout="wide")
 USERS_FILE = "users.json"
+
 
 # -------------------- HELPERS --------------------
 def load_users():
@@ -36,7 +38,7 @@ def load_lottie(url):
     r = requests.get(url)
     return r.json() if r.status_code == 200 else None
 
-def type_text(text, speed=0.03):
+def type_text(text, speed=0.02):
     box = st.empty()
     out = ""
     for c in text:
@@ -44,10 +46,15 @@ def type_text(text, speed=0.03):
         box.markdown(f"### {out}")
         time.sleep(speed)
 
+
 # -------------------- CACHED MODELS --------------------
 @st.cache_resource
 def load_llm():
-    return ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+    return ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        temperature=0.3,
+        max_output_tokens=2048
+    )
 
 @st.cache_resource
 def load_blip():
@@ -57,6 +64,7 @@ def load_blip():
         "Salesforce/blip-vqa-base"
     ).to(device)
     return processor, model, device
+
 
 # -------------------- SESSION DEFAULTS --------------------
 defaults = {
@@ -70,6 +78,7 @@ defaults = {
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
 
 # -------------------- AUTH UI --------------------
 def login_ui():
@@ -107,26 +116,36 @@ def login_ui():
                     save_users(st.session_state.users)
                     st.success("Account created")
 
+
 # -------------------- IMAGE Q&A --------------------
 def answer_image_question(image, question):
     processor, model, device = load_blip()
     inputs = processor(image, question, return_tensors="pt").to(device)
 
-    outputs = model.generate(**inputs, max_length=10, num_beams=5)
+    outputs = model.generate(
+        **inputs,
+        max_length=30,
+        num_beams=5,
+        early_stopping=True
+    )
+
     short_answer = processor.decode(outputs[0], skip_special_tokens=True)
 
     llm = load_llm()
     prompt = f"""
 Question: {question}
 Vision Answer: {short_answer}
-Convert into one clear sentence. No extra details.
+
+Convert into one clear and complete sentence.
 """
     return llm.invoke(prompt).content
+
 
 # -------------------- AUTH CHECK --------------------
 if not st.session_state.authenticated:
     login_ui()
     st.stop()
+
 
 # -------------------- SIDEBAR --------------------
 st.sidebar.success("Logged in ✅")
@@ -139,18 +158,6 @@ if st.sidebar.button("Logout"):
 
 mode = st.sidebar.radio("Mode", ["📘 PDF Analyzer", "🖼 Image Q&A"])
 
-# -------------------- SIDEBAR HISTORY --------------------
-st.sidebar.markdown("### 💬 Chat History")
-
-if st.session_state.chat_history:
-    for i, (q, _) in enumerate(st.session_state.chat_history[-5:], start=1):
-        st.sidebar.markdown(f"{i}. {q[:40]}...")
-
-    if st.sidebar.button("🧹 Clear History"):
-        st.session_state.chat_history = []
-        st.rerun()
-else:
-    st.sidebar.caption("No history yet")
 
 # -------------------- HERO --------------------
 col1, col2 = st.columns([1, 2])
@@ -167,9 +174,11 @@ with col2:
 
 st.divider()
 
+
 # ==================== PDF ANALYZER ====================
 if mode == "📘 PDF Analyzer":
-    pdf = st.file_uploader("Upload PDF", type="pdf", key="pdf_uploader")
+
+    pdf = st.file_uploader("Upload PDF", type="pdf")
 
     if pdf:
         pdf_id = f"{pdf.name}_{pdf.size}"
@@ -184,19 +193,16 @@ if mode == "📘 PDF Analyzer":
                 reader = PdfReader(pdf)
                 text = ""
 
-                for pdf_page in reader.pages:
-                    extracted = pdf_page.extract_text()
+                for page in reader.pages:
+                    extracted = page.extract_text()
                     if extracted:
                         text += extracted + "\n"
 
-                if not text.strip():
-                    st.error("No readable text found in PDF")
-                    st.stop()
-
                 splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=500,
-                    chunk_overlap=80
+                    chunk_size=800,
+                    chunk_overlap=150
                 )
+
                 chunks = splitter.split_text(text)
 
                 embeddings = HuggingFaceEmbeddings(
@@ -205,54 +211,64 @@ if mode == "📘 PDF Analyzer":
 
                 st.session_state.vector_db = FAISS.from_texts(chunks, embeddings)
 
-        q = st.text_input("Ask a question")
+        question = st.chat_input("Ask a question about the PDF")
 
-        if q:
-            llm = load_llm()
-            docs = st.session_state.vector_db.similarity_search(q, k=5)
+        if question:
+            with st.spinner("Thinking..."):
+                docs = st.session_state.vector_db.similarity_search(question, k=8)
+                llm = load_llm()
 
-            prompt = ChatPromptTemplate.from_template("""
+                prompt = ChatPromptTemplate.from_template("""
+You are analyzing a structured academic document.
+
 Context:
 {context}
 
 Question:
 {question}
 
-Rules:
-- Answer only from document
-- If not found say: Information not found in the document
+Instructions:
+- Provide complete information from context.
+- If question refers to a section (like Unit 3),
+  explain the full section clearly.
+- Do not cut off important points.
+- If not found say:
+  "Information not found in the document."
 """)
 
-            chain = create_stuff_documents_chain(llm, prompt)
-            res = chain.invoke({"context": docs, "question": q})
+                chain = create_stuff_documents_chain(llm, prompt)
 
-            if isinstance(res, dict):
-                answer = res.get("output_text", "")
-            else:
-                answer = res
+                result = chain.invoke({
+                    "context": docs,
+                    "question": question
+                })
 
-            st.session_state.chat_history.append((q, answer))
+                answer = result.get("output_text", "") \
+                    if isinstance(result, dict) else result
 
-        # -------- CHAT DISPLAY (QUESTION ON TOP, ANSWER BELOW) --------
+                st.session_state.chat_history.append((question, answer))
+
+        # Display Chat
         st.markdown("## 💬 Conversation")
 
-        chat_container = st.container()
-with chat_container:
-            for uq, ua in reversed(st.session_state.chat_history):
-                st.markdown(f"🧑 **You:** {uq}")
-                st.markdown(f"🤖 **AI:** {ua}")
-                st.divider()
+        for q, a in reversed(st.session_state.chat_history):
+            st.markdown(f"🧑 **You:** {q}")
+            st.markdown(f"🤖 **AI:** {a}")
+            st.divider()
 
 
 # ==================== IMAGE Q&A ====================
 if mode == "🖼 Image Q&A":
+
     img_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
 
     if img_file:
         img = Image.open(img_file).convert("RGB")
         st.image(img, use_column_width=True)
 
-        question = st.text_input("Ask a question about the image")
+        question = st.chat_input("Ask a question about the image")
+
         if question:
             with st.spinner("Analyzing image..."):
-                st.success(answer_image_question(img, question))
+                answer = answer_image_question(img, question)
+                st.success(answer)
